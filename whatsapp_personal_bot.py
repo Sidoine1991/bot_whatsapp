@@ -1,6 +1,18 @@
 """
 📱 Bot WhatsApp Personnel - Connexion directe à votre compte
 Utilise une API simple pour connecter votre numéro WhatsApp personnel
+
+UltraMSG — réglages instance (dashboard ou POST /instance/settings) pour la prise en main :
+  • webhook_url : URL HTTPS publique de ce serveur, ex. …/webhook
+  • webhook_message_received : true  (messages entrants → le bot peut répondre)
+  • webhook_message_create : true    (messages créés / sortants → détecte vos envois depuis le téléphone)
+  • webhook_message_ack : optionnel (accusés livraison / lecture)
+  • webhook_message_download_media : selon besoin
+
+Sans webhook_message_create, UltraMSG n’envoie pas vos messages sortants : la fenêtre
+BOT_OWNER_HANDOFF_HOURS (prise en main 24 h) ne peut pas voir que vous avez répondu.
+
+Variables .env : BOT_OWNER_HANDOFF_HOURS (défaut 24), BOT_HANDOFF_IGNORE_API_SEND_SECONDS (défaut 30).
 """
 
 import requests
@@ -10,7 +22,11 @@ import logging
 import os
 from flask import Flask, request, jsonify
 from bot_whatsapp_rag import WhatsAppRAGBot, normalize_whatsapp_outgoing
-from bot_reply_policy import record_owner_outgoing, should_auto_reply_inbound
+from bot_reply_policy import (
+    notify_bot_api_send,
+    record_owner_outgoing,
+    should_auto_reply_inbound,
+)
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -46,6 +62,7 @@ def send_whatsapp_message(phone: str, message: str) -> bool:
         response = requests.post(WHATSAPP_API_URL, json=data, timeout=30)
         
         if response.status_code == 200:
+            notify_bot_api_send(phone)
             logger.info(f"✅ Message envoyé à {phone}")
             return True
         else:

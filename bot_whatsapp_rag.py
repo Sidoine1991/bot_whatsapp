@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import List, Dict, Any
 import requests
 from dotenv import load_dotenv
+from bot_reply_policy import notify_bot_api_send
 
 # Configuration du logging
 logging.basicConfig(
@@ -523,6 +524,7 @@ Posez votre question en une phrase : j\u2019utiliserai le contexte de nos échan
             response = requests.post(url, json=payload, headers=headers)
             
             if response.status_code == 200:
+                notify_bot_api_send(phone_number)
                 logger.info(f"✅ Message envoyé à {phone_number}")
                 return True
             else:

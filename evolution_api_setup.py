@@ -15,6 +15,7 @@ import time
 import logging
 import os
 from dotenv import load_dotenv
+from bot_reply_policy import notify_bot_api_send
 from bot_whatsapp_rag import WhatsAppRAGBot
 
 load_dotenv()
@@ -161,6 +162,7 @@ def send_message(phone_number: str, message: str) -> bool:
         response = requests.post(url, headers=headers, json=data, timeout=30)
         
         if response.status_code in [200, 201]:
+            notify_bot_api_send(phone_number)
             logger.info(f"✅ Message envoyé à {phone_number}")
             return True
         else:
