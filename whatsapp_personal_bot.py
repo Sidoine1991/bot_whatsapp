@@ -75,19 +75,21 @@ def webhook():
     """Webhook pour recevoir les messages WhatsApp"""
     try:
         data = request.get_json()
+        logger.info(f"📨 Webhook reçu: {data}")
         
-        # Extraire le message
-        if 'event' in data and data['event'] == 'message':
-            message_data = data.get('data', {})
-            from_phone = message_data.get('from', '')
-            message_text = message_data.get('body', '')
+        # UltraMSG envoie les messages directement
+        # Format: {"from": "229XXXXXXXX", "to": "instance", "body": "message", "type": "chat", ...}
+        from_phone = data.get('from', '')
+        message_text = data.get('body', '')
+        
+        if message_text and from_phone:
+            logger.info(f"📨 Message de {from_phone}: {message_text}")
             
-            if message_text and from_phone:
-                # Générer la réponse
-                response = process_whatsapp_message(from_phone, message_text)
-                
-                # Envoyer la réponse
-                send_whatsapp_message(from_phone, response)
+            # Générer la réponse
+            response = process_whatsapp_message(from_phone, message_text)
+            
+            # Envoyer la réponse
+            send_whatsapp_message(from_phone, response)
         
         return jsonify({'status': 'ok'}), 200
         
