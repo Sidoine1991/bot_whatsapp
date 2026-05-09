@@ -9,7 +9,7 @@ import time
 import logging
 import os
 from flask import Flask, request, jsonify
-from bot_whatsapp_rag import WhatsAppRAGBot
+from bot_whatsapp_rag import WhatsAppRAGBot, normalize_whatsapp_outgoing
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -68,7 +68,9 @@ def process_whatsapp_message(from_phone: str, message: str) -> str:
         
     except Exception as e:
         logger.error(f"❌ Erreur traitement: {e}")
-        return "Désolé, je rencontre une difficulté technique. Veuillez réessayer ultérieurement."
+        return normalize_whatsapp_outgoing(
+            "Désolé, je rencontre une difficulté technique. Veuillez réessayer ultérieurement."
+        )
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
