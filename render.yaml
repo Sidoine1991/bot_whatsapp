@@ -4,7 +4,7 @@ services:
     name: whatsapp-bot
     env: python
     plan: free
-    buildCommand: pip install -r requirements_bot.txt
+    buildCommand: pip install flask requests python-dotenv chromadb langchain langchain-community
     startCommand: python whatsapp_personal_bot.py
     envVars:
       - key: PORT
