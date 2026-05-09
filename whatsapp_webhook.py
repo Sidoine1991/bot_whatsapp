@@ -9,6 +9,7 @@ import logging
 from datetime import datetime
 import os
 from bot_whatsapp_rag import WhatsAppRAGBot
+from bot_reply_policy import record_owner_outgoing, should_auto_reply_inbound
 
 # Configuration
 app = Flask(__name__)
@@ -54,6 +55,11 @@ def webhook():
         message_data = extract_message_data(data)
         
         if message_data:
+            allow, skip_reason = should_auto_reply_inbound(message_data.get("user_id"))
+            if not allow:
+                logger.info(f"⏸️ Pas de réponse auto: {skip_reason}")
+                return jsonify({'status': 'skipped', 'reason': skip_reason}), 200
+            
             # Traiter le message
             response = bot.process_message(
                 message_data['message'], 
@@ -84,6 +90,10 @@ def extract_message_data(data):
     try:
         # Structure pour Evolution API
         if 'key' in data and 'message' in data:
+            key = data["key"]
+            if key.get("fromMe"):
+                record_owner_outgoing(key.get("remoteJid"))
+                return None
             return {
                 'user_id': data['key']['remoteJid'],
                 'phone_number': data['key']['remoteJid'].split('@')[0],

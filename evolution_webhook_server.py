@@ -8,6 +8,7 @@ import logging
 import os
 from datetime import datetime
 from bot_whatsapp_rag import WhatsAppRAGBot
+from bot_reply_policy import record_owner_outgoing, should_auto_reply_inbound
 from evolution_api_setup import send_message, check_connection
 from dotenv import load_dotenv
 
@@ -39,13 +40,14 @@ def evolution_webhook():
         if data.get('event') == 'messages.upsert':
             message_data = data.get('data', {})
             
-            # Ignorer les messages envoyés par nous-mêmes
+            # Messages sortants (téléphone / Web) : mémoriser pour éviter de répondre tout de suite à la place du propriétaire
             key = message_data.get('key', {})
+            remote_jid = key.get('remoteJid', '')
             if key.get('fromMe', False):
+                record_owner_outgoing(remote_jid)
                 return jsonify({'status': 'ignored'}), 200
             
             # Extraire les infos
-            remote_jid = key.get('remoteJid', '')
             sender_phone = remote_jid.split('@')[0]
             
             # Extraire le texte du message
@@ -70,6 +72,11 @@ def evolution_webhook():
             #     return jsonify({'status': 'ignored'}), 200
             
             logger.info(f"📨 Message de {sender_phone}: {message_text[:50]}...")
+            
+            allow, skip_reason = should_auto_reply_inbound(remote_jid)
+            if not allow:
+                logger.info(f"⏸️ Pas de réponse auto: {skip_reason}")
+                return jsonify({'status': 'skipped', 'reason': skip_reason}), 200
             
             # Traiter avec le bot RAG
             response = bot.process_message(message_text, sender_phone)
@@ -119,6 +126,10 @@ if __name__ == '__main__':
     print("🚀 Serveur Webhook Evolution API démarré")
     print(f"📚 Documents ChromaDB: {bot.collection.count() if bot.collection else 0}")
     print(f"🔗 Webhook: http://localhost:5000/evolution-webhook")
+    print(
+        "💡 Prise en main : après votre message à un contact, le bot se tait pour ce numéro "
+        "pendant BOT_OWNER_HANDOFF_HOURS (défaut 24 h). Désactiver : BOT_OWNER_HANDOFF_HOURS=0"
+    )
     
     port = int(os.getenv('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
