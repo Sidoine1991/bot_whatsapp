@@ -1,0 +1,24 @@
+services:
+  # Service principal du bot WhatsApp
+  - type: web
+    name: whatsapp-bot
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements_bot.txt
+    startCommand: python whatsapp_personal_bot.py
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: CHROMA_HOST
+        value: api.trychroma.com
+      - key: CHROMA_API_KEY
+        value: ck-3NwusCGa5u3aJB5oZnqQkbehoh5uDCNUdUnBmjvqGN7P
+      - key: CHROMA_TENANT
+        value: 0dc087aa-1492-4485-b346-35546f1fa1ac
+      - key: CHROMA_DATABASE
+        value: sido
+      - key: COLLECTION_NAME
+        value: ccrb_knowledge_base
+      - key: WHATSAPP_TOKEN
+        value: cfej7530ntiyfgcc
+    healthCheckPath: /health

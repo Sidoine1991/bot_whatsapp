@@ -1,0 +1,16 @@
+chromadb
+python-dotenv
+langchain
+langchain-community
+pypdf
+pandas
+numpy
+streamlit
+plotly
+openai
+tiktoken
+sentence-transformers
+transformers
+torch
+beautifulsoup4
+requests
