@@ -10,6 +10,7 @@ import logging
 import os
 from flask import Flask, request, jsonify
 from bot_whatsapp_rag import WhatsAppRAGBot, normalize_whatsapp_outgoing
+from bot_reply_policy import record_owner_outgoing, should_auto_reply_inbound
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -72,6 +73,21 @@ def process_whatsapp_message(from_phone: str, message: str) -> str:
             "Désolé, je rencontre une difficulté technique. Veuillez réessayer ultérieurement."
         )
 
+def _ultramsg_payload(data: dict):
+    """Support format plat ou data.data (UltraMSG)."""
+    inner = data.get("data") if isinstance(data.get("data"), dict) else data
+    from_phone = inner.get("from", data.get("from", "")) or ""
+    message_text = inner.get("body", data.get("body", "")) or ""
+    raw_from_me = inner.get("fromMe", data.get("fromMe", False))
+    if isinstance(raw_from_me, str):
+        from_me = raw_from_me.strip().lower() in ("true", "1", "yes")
+    else:
+        from_me = bool(raw_from_me)
+    # Message sortant : le contact est souvent dans "to"
+    peer_for_outgoing = inner.get("to", data.get("to", "")) or from_phone
+    return inner, from_phone, message_text, from_me, peer_for_outgoing
+
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     """Webhook pour recevoir les messages WhatsApp"""
@@ -79,18 +95,20 @@ def webhook():
         data = request.get_json()
         logger.info(f"📨 Webhook reçu: {data}")
         
-        # UltraMSG envoie les messages directement
-        # Format: {"from": "229XXXXXXXX", "to": "instance", "body": "message", "type": "chat", ...}
-        from_phone = data.get('from', '')
-        message_text = data.get('body', '')
+        _, from_phone, message_text, from_me, peer_for_outgoing = _ultramsg_payload(data or {})
+        
+        if from_me:
+            record_owner_outgoing(peer_for_outgoing)
+            return jsonify({'status': 'ignored', 'reason': 'fromMe'}), 200
         
         if message_text and from_phone:
+            allow, skip_reason = should_auto_reply_inbound(from_phone)
+            if not allow:
+                logger.info(f"⏸️ Pas de réponse auto: {skip_reason}")
+                return jsonify({'status': 'skipped', 'reason': skip_reason}), 200
+            
             logger.info(f"📨 Message de {from_phone}: {message_text}")
-            
-            # Générer la réponse
             response = process_whatsapp_message(from_phone, message_text)
-            
-            # Envoyer la réponse
             send_whatsapp_message(from_phone, response)
         
         return jsonify({'status': 'ok'}), 200
@@ -182,6 +200,11 @@ if __name__ == '__main__':
     if not WHATSAPP_TOKEN:
         print("\n⚠️ WHATSAPP_TOKEN non configuré")
         print("📋 Suivez les étapes sur http://localhost:5000/setup")
+    
+    print(
+        "💡 Prise en main : BOT_OWNER_HANDOFF_HOURS=24 par défaut (bot silencieux sur le contact "
+        "où vous avez répondu). Désactiver : BOT_OWNER_HANDOFF_HOURS=0"
+    )
     
     print("=" * 60)
     
