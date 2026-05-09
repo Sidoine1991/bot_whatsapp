@@ -16,6 +16,14 @@ Pauses courtes optionnelles (complément) :
 
 Note : les groupes (@g.us) ne déclenchent pas la prise en main par contact ; seule une
 pause globale éventuelle s’applique encore après un envoi dans un groupe.
+
+UltraMSG : activez webhook_message_received + webhook_message_create (voir commentaires
+dans whatsapp_personal_bot.py). Les créations de messages incluent souvent les envois
+via l’API du bot : appelez notify_bot_api_send() après chaque envoi réussi pour ne pas
+traiter ces évènements comme une prise en main humaine.
+
+BOT_HANDOFF_IGNORE_API_SEND_SECONDS : fenêtre (défaut 30 s) pour ignorer un fromMe
+entrant si elle fait suite à notify_bot_api_send pour le même contact.
 """
 
 from __future__ import annotations
@@ -32,6 +40,7 @@ _lock = threading.Lock()
 _last_owner_outgoing_monotonic: float = 0.0
 _last_owner_outgoing_by_chat: dict[str, float] = {}
 _owner_handoff_walltime_by_chat: dict[str, float] = {}
+_recent_bot_api_send_mono: dict[str, float] = {}
 
 
 def chat_key(phone_or_jid: str | None) -> str:
@@ -67,6 +76,35 @@ def _int_env(name: str, default: int = 0) -> int:
         return default
 
 
+def _ignore_api_echo_seconds() -> float:
+    """Fenêtre pour ignorer le webhook fromMe qui répercute un envoi fait via l’API (souvent quelques secondes)."""
+    try:
+        v = float(os.getenv("BOT_HANDOFF_IGNORE_API_SEND_SECONDS", "30").strip())
+        return max(0.05, min(v, 120.0))
+    except ValueError:
+        return 30.0
+
+
+def notify_bot_api_send(phone_or_jid: str | None) -> None:
+    """Après un envoi réussi via l’API (UltraMSG, Evolution, etc.), pour ignorer le webhook fromMe echo."""
+    key = chat_key(phone_or_jid)
+    if not key:
+        return
+    with _lock:
+        _recent_bot_api_send_mono[key] = time.monotonic()
+        cutoff = time.monotonic() - 120.0
+        stale = [k for k, t in _recent_bot_api_send_mono.items() if t < cutoff]
+        for k in stale[:300]:
+            del _recent_bot_api_send_mono[k]
+
+
+def _is_recent_bot_api_echo_unlocked(key: str, now_mono: float) -> bool:
+    t = _recent_bot_api_send_mono.get(key)
+    if not t:
+        return False
+    return (now_mono - t) <= _ignore_api_echo_seconds()
+
+
 def _handoff_hours() -> float:
     """Heures de silence bot par contact après un message sortant (défaut 24). 0 = désactivé."""
     try:
@@ -88,6 +126,12 @@ def record_owner_outgoing(remote_jid: str | None) -> None:
     is_group = _is_group_jid(remote_jid)
 
     with _lock:
+        if _is_recent_bot_api_echo_unlocked(key, now_mono):
+            logger.info(
+                "fromMe ignoré pour la prise en main (echo probable de l’envoi API bot vers ce contact)"
+            )
+            return
+
         global _last_owner_outgoing_monotonic
         _last_owner_outgoing_monotonic = now_mono
 

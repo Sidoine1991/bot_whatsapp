@@ -8,6 +8,7 @@ import logging
 import json
 from datetime import datetime
 from flask import Flask, request, jsonify
+from bot_reply_policy import notify_bot_api_send
 from bot_whatsapp_rag import WhatsAppRAGBot
 import os
 from dotenv import load_dotenv
@@ -55,6 +56,7 @@ def send_whatsapp_message(recipient_phone: str, message_text: str) -> bool:
         response = requests.post(url, headers=headers, json=data, timeout=30)
         
         if response.status_code == 200:
+            notify_bot_api_send(recipient_phone)
             logger.info(f"✅ Message envoyé à {recipient_phone}")
             return True
         else:
