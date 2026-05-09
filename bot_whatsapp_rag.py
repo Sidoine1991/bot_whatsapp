@@ -4,6 +4,7 @@ Assistant Intelligent CCR-B / AgroEco IA Pro
 """
 
 import chromadb
+import html
 import os
 import json
 import asyncio
@@ -19,6 +20,15 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+def normalize_whatsapp_outgoing(text: str) -> str:
+    """Évite l'affichage littéral de &#039; / &amp; si la passerelle applique html.escape sur le texte."""
+    if not text:
+        return text
+    t = html.unescape(text)
+    return t.replace("'", "\u2019")
+
 
 class WhatsAppRAGBot:
     def __init__(self):
@@ -110,9 +120,11 @@ class WhatsAppRAGBot:
             for result in context
         ])
         
-        # Récupérer l'historique de conversation
+        # Historique avant le message courant (rempli dans process_message après génération)
         history = self.conversation_history.get(user_id, [])
-        history_text = "\n".join([f"{msg['role']}: {msg['content']}" for msg in history[-5:]])
+        history_text = "\n".join(
+            [f"{msg['role']}: {msg['content']}" for msg in history[-10:]]
+        )
         
         # Prompt système basé sur le document d'entraînement
         system_prompt = f"""
@@ -160,53 +172,153 @@ Réponds de manière structurée et professionnelle en utilisant les information
         
         try:
             # Simulation de réponse LLM (remplacer par vrai appel API)
-            response = self._simulate_llm_response(query, context, system_prompt)
+            response = self._simulate_llm_response(query, context, system_prompt, user_id)
             return response
             
         except Exception as e:
             logger.error(f"❌ Erreur génération LLM: {e}")
             return "Désolé, je rencontre une difficulté technique. Veuillez réessayer ultérieurement."
     
-    def _simulate_llm_response(self, query: str, context: List[Dict], system_prompt: str) -> str:
+    def _is_greeting_query(self, query: str) -> bool:
+        query_lower = query.lower().strip()
+        greetings = ['bonjour', 'salut', 'hello', 'hi', 'hey', 'coucou', 'bonsoir', 'yo', 'bjr', 'slt']
+        return query_lower in greetings or (
+            len(query_lower) < 12 and any(g in query_lower for g in greetings)
+        )
+    
+    def _is_thanks_query(self, query: str) -> bool:
+        query_lower = query.lower().strip()
+        thanks = ['merci', 'thank', 'au revoir', 'bye', 'ciao', 'bonne journée']
+        return any(t in query_lower for t in thanks)
+    
+    def _has_prior_exchange(self, user_id: str) -> bool:
+        if not user_id:
+            return False
+        return any(m.get('role') == 'assistant' for m in self.conversation_history.get(user_id, []))
+    
+    def _last_substantive_user_message(self, user_id: str) -> str:
+        """Dernier message utilisateur utile (hors simples salutations)."""
+        if not user_id:
+            return ""
+        hist = self.conversation_history.get(user_id, [])
+        greetings = {'bonjour', 'salut', 'hello', 'hi', 'hey', 'coucou', 'bonsoir', 'yo', 'bjr', 'slt'}
+        for msg in reversed(hist):
+            if msg.get('role') != 'user':
+                continue
+            t = (msg.get('content') or '').strip()
+            tl = t.lower()
+            if len(t) < 5:
+                continue
+            if tl in greetings:
+                continue
+            if len(t) < 14 and any(g in tl for g in greetings) and sum(c.isalpha() for c in t) < 10:
+                continue
+            return t
+        return ""
+    
+    def _build_courteous_greeting(self, user_id: str = None) -> str:
+        name = self.owner_info['name']
+        prior_assistant_count = sum(
+            1 for m in self.conversation_history.get(user_id, [])
+            if m.get('role') == 'assistant'
+        )
+        if prior_assistant_count == 0:
+            return (
+                f"Bonjour,\n\n"
+                f"Merci pour votre message. Je suis l\u2019assistant de **{name}** ; "
+                f"je réponds avec attention lorsqu\u2019il n\u2019est pas disponible.\n\n"
+                f"Indiquez simplement ce dont vous avez besoin — parcours, compétences, projets, "
+                f"coordonnées ou sujets agroécologie / données — et j\u2019y répondrai volontiers."
+            )
+        last_topic = self._last_substantive_user_message(user_id)
+        if last_topic:
+            short = last_topic[:140] + ("…" if len(last_topic) > 140 else "")
+            return (
+                f"Bonjour,\n\n"
+                f"Je suis heureux de vous retrouver. Nous avions notamment évoqué : « {short} ».\n\n"
+                f"Souhaitez-vous approfondir ce point ou aborder un autre sujet au sujet de **{name}** ? "
+                f"Je reste à votre disposition."
+            )
+        return (
+            f"Bonjour,\n\n"
+            f"Ravi de vous lire à nouveau. Que puis-je préciser pour vous aujourd\u2019hui "
+            f"au sujet de **{name}** ?"
+        )
+    
+    def _build_thanks_response(self, user_id: str = None) -> str:
+        if user_id and self._has_prior_exchange(user_id):
+            return (
+                "Je vous en prie. Ce fut un plaisir d\u2019échanger avec vous.\n\n"
+                "Revenez quand vous voulez — je me souviendrai de notre conversation pour rester cohérent."
+            )
+        return (
+            "Je vous en prie. N\u2019hésitez pas à revenir si vous avez d\u2019autres questions. "
+            "Excellente journée !"
+        )
+    
+    def _continuity_intro(self, user_id: str = None) -> str:
+        if not user_id or not self._has_prior_exchange(user_id):
+            return ""
+        topic = self._last_substantive_user_message(user_id)
+        if topic and len(topic) > 12:
+            snippet = topic[:90] + ("…" if len(topic) > 90 else "")
+            return f"📎 En lien avec « {snippet} », voici des précisions :\n\n"
+        return "📎 Pour compléter notre échange :\n\n"
+    
+    def _prepend_continuity(self, user_id: str, body: str) -> str:
+        intro = self._continuity_intro(user_id)
+        return intro + body if intro else body
+    
+    def _simulate_llm_response(
+        self, query: str, context: List[Dict], system_prompt: str, user_id: str = None
+    ) -> str:
         """Simulation de réponse LLM (remplacer par vrai appel API)"""
         
         query_lower = query.lower().strip()
         
-        # Salutations simples → réponse professionnelle
-        greetings = ['bonjour', 'salut', 'hello', 'hi', 'hey', 'coucou', 'bonsoir', 'yo', 'bjr', 'slt']
-        if query_lower in greetings or (len(query_lower) < 10 and any(g in query_lower for g in greetings)):
-            return f"👋 Bonjour ! Je suis l'assistant personnel de **{self.owner_info['name']}**.\n\nJe suis là pour vous aider en son absence. {self.owner_info['name']} est peut-être :\n🏢 En réunion professionnelle\n🚀 En déplacement mission\n👨‍👩‍👧‍👦 En famille\n\nN'hésitez pas à me laisser votre message ou à me poser vos questions !\n\nJe peux vous renseigner sur :\n📊 Data Science & Analyse\n🌱 Agroécologie & Filière Riz\n📈 Suivi-Évaluation (MEAL)\n🤖 Développement IA & Web"
+        if self._is_greeting_query(query):
+            return self._build_courteous_greeting(user_id)
         
-        # Remerciements / au revoir
-        thanks = ['merci', 'thank', 'au revoir', 'bye', 'ciao', 'bonne journée']
-        if any(t in query_lower for t in thanks):
-            return "😊 Avec plaisir ! N'hésitez pas à revenir si vous avez d'autres questions. Bonne journée !"
+        if self._is_thanks_query(query):
+            return self._build_thanks_response(user_id)
         
         # Pas de contexte trouvé
         if not context:
-            return f"Je n'ai pas trouvé d'information spécifique sur cette question. Je suis l'assistant de **{self.owner_info['name']}**, spécialisé en Data Science, Agroécologie et MEAL.\n\nEssayez de reformuler ou posez une question sur ses compétences, projets ou expertise."
+            msg = (
+                f"Je n\u2019ai pas trouvé d\u2019information précise pour cette formulation dans la base. "
+                f"Je suis l\u2019assistant de **{self.owner_info['name']}** (Data Science, agroécologie, MEAL).\n\n"
+                f"Reformulez en une phrase, ou essayez des mots-clés : compétences, projets, parcours, contact. "
+                f"Si c\u2019est la suite de notre échange, un petit rappel du sujet m\u2019aide à rester cohérent."
+            )
+            return self._prepend_continuity(user_id, msg)
         
         # Analyse basée sur le contexte
-        if any(keyword in query_lower for keyword in ['compétence', 'skill', 'expertise', 'maîtrise', 'outils', 'technologie']):
-            return self._format_skills_response(context)
+        if any(
+            keyword in query_lower
+            for keyword in [
+                'compétence', 'competence', 'compétences', 'competences',
+                'skill', 'expertise', 'maîtrise', 'maitrise', 'outils', 'technologie'
+            ]
+        ):
+            return self._prepend_continuity(user_id, self._format_skills_response(context))
         
         elif any(keyword in query_lower for keyword in ['projet', 'project', 'réalisation', 'achievement', 'app', 'application']):
-            return self._format_projects_response(context)
+            return self._prepend_continuity(user_id, self._format_projects_response(context))
         
         elif any(keyword in query_lower for keyword in ['expérience', 'experience', 'parcours', 'carrière', 'travail', 'emploi']):
-            return self._format_experience_response(context)
+            return self._prepend_continuity(user_id, self._format_experience_response(context))
         
         elif any(keyword in query_lower for keyword in ['contact', 'coordonnées', 'email', 'téléphone', 'joindre']):
-            return self._format_contact_response()
+            return self._prepend_continuity(user_id, self._format_contact_response())
         
         elif any(keyword in query_lower for keyword in ['formation', 'diplôme', 'certificat', 'étude', 'académique']):
-            return self._format_formation_response(context)
+            return self._prepend_continuity(user_id, self._format_formation_response(context))
         
         elif any(keyword in query_lower for keyword in ['agroécolog', 'riz', 'agricult', 'srp', 'compost', 'vermicompost']):
-            return self._format_agroecologie_response(context)
+            return self._prepend_continuity(user_id, self._format_agroecologie_response(context))
         
         else:
-            return self._format_general_response(query, context)
+            return self._format_general_response(query, context, user_id)
     
     def _format_skills_response(self, context: List[Dict]) -> str:
         """Formater la réponse sur les compétences"""
@@ -223,7 +335,7 @@ Réponds de manière structurée et professionnelle en utilisant les information
             if 'sql' in content:
                 skills_found.append("🗄️ **SQL**: PostgreSQL, MySQL, SQLAlchemy")
             if 'power bi' in content:
-                skills_found.append("📈 **Power BI & Tableau**: Tableaux de bord interactifs")
+                skills_found.append("📈 **Power BI et Tableau**: Tableaux de bord interactifs")
             if 'api' in content:
                 skills_found.append("🔌 **APIs**: World Bank, FAO, UNDP, REST APIs")
         
@@ -288,10 +400,10 @@ N'hésitez pas à le contacter pour vos projets en Data Science, Agroécologie o
     
     def _format_formation_response(self, context: List[Dict]) -> str:
         """Formater la réponse sur la formation"""
-        response = "🎓 **Formation & Certifications de Sidoine YEBADOKPO**\n\n"
+        response = "🎓 **Formation et certifications de Sidoine YEBADOKPO**\n\n"
         
         formations = [
-            "� **MBA Data Science Management** - Tech Institute (2024-2026, en cours)",
+            "🎓 **MBA Data Science Management** - Tech Institute (2024-2026, en cours)",
             "🌲 **Master 2 Sciences Forestières** - UNA Kétou (2022-2024)",
             "🌾 **Licence en Agronomie** - UNA Kétou (2009-2013)",
             "🇬🇧 **Licence en Anglais** - UAC Adjarra (2011-2014)",
@@ -301,7 +413,7 @@ N'hésitez pas à le contacter pour vos projets en Data Science, Agroécologie o
             "• Data Scientist Associate - DataCamp (2024)",
             "• PCAP: Programming Essentials in Python - Cisco (2022)",
             "• Fundamentals of Data Science - Google/Coursera (2023)",
-            "• Data Visualization with Excel & Cognos - IBM (2022)"
+            "• Data Visualization with Excel et Cognos - IBM (2022)"
         ]
         
         response += "\n".join(formations)
@@ -309,7 +421,7 @@ N'hésitez pas à le contacter pour vos projets en Data Science, Agroécologie o
     
     def _format_agroecologie_response(self, context: List[Dict]) -> str:
         """Formater la réponse sur l'agroécologie"""
-        response = "🌱 **Expertise Agroécologie & Filière Riz**\n\n"
+        response = "🌱 **Expertise Agroécologie et Filière Riz**\n\n"
         
         response += """**Agroécologie:**
 • Agriculture durable, compostage, vermicompost
@@ -331,50 +443,46 @@ N'hésitez pas à le contacter pour vos projets en Data Science, Agroécologie o
         
         return response
     
-    def _format_general_response(self, query: str, context: List[Dict]) -> str:
+    def _format_general_response(self, query: str, context: List[Dict], user_id: str = None) -> str:
         """Formater une réponse générale"""
         if context:
             best_result = context[0]
-            # Extraire un résumé pertinent au lieu de tout afficher
             content = best_result['content']
             lines = content.split('\n')
             relevant_lines = [l for l in lines if l.strip() and not l.startswith('---')][:8]
-            response = f"📋 **Résultat pour votre question:**\n\n" + "\n".join(relevant_lines)
-            response += f"\n\n💡 Posez une question plus précise pour plus de détails !"
+            response = f"📋 **Éléments utiles pour votre question :**\n\n" + "\n".join(relevant_lines)
+            response += f"\n\n💡 Dites-moi si vous voulez creuser un aspect précis — je m\u2019appuie aussi sur notre fil de discussion."
         else:
-            response = f"""Je suis l'assistant de **{self.owner_info['name']}**.
+            response = f"""Voici ce sur quoi je peux vous orienter au sujet de **{self.owner_info['name']}** :
 
-Je peux vous aider sur :
-📊 Data Science & Analyse de données
-🌱 Agroécologie & Filière Riz
-📈 Suivi-Évaluation de Projets (MEAL)
-🤖 Développement d'Applications IA
-🔧 Automatisation & Digitalisation
+📊 Data Science et analyse de données
+🌱 Agroécologie et filière riz
+📈 Suivi-évaluation (MEAL)
+🤖 Développement d\u2019applications IA
+🔧 Automatisation et digitalisation
 
-Posez-moi une question spécifique !"""
+Posez votre question en une phrase : j\u2019utiliserai le contexte de nos échanges quand c\u2019est pertinent."""
         
-        return response
+        return self._prepend_continuity(user_id, response)
     
     def process_message(self, message: str, user_id: str = None) -> str:
         """Traiter un message entrant"""
         try:
-            # Ajouter à l'historique
             if user_id not in self.conversation_history:
                 self.conversation_history[user_id] = []
+            
+            # Recherche et génération avant d'enregistrer le tour courant
+            # → l'historique lu par le modèle ne contient que les échanges *passés*
+            context = self.search_knowledge_base(message)
+            response = normalize_whatsapp_outgoing(
+                self.generate_llm_response(message, context, user_id)
+            )
             
             self.conversation_history[user_id].append({
                 'role': 'user',
                 'content': message,
                 'timestamp': datetime.now().isoformat()
             })
-            
-            # Rechercher dans la base de connaissances
-            context = self.search_knowledge_base(message)
-            
-            # Générer la réponse
-            response = self.generate_llm_response(message, context, user_id)
-            
-            # Ajouter la réponse à l'historique
             self.conversation_history[user_id].append({
                 'role': 'assistant',
                 'content': response,
@@ -389,7 +497,9 @@ Posez-moi une question spécifique !"""
             
         except Exception as e:
             logger.error(f"❌ Erreur traitement message: {e}")
-            return "Désolé, une erreur est survenue. Veuillez réessayer."
+            return normalize_whatsapp_outgoing(
+                "Désolé, une erreur est survenue. Veuillez réessayer."
+            )
     
     def send_whatsapp_message(self, phone_number: str, message: str):
         """Envoyer un message via WhatsApp Evolution API"""
