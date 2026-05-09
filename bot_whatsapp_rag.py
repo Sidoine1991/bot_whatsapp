@@ -172,10 +172,10 @@ Réponds de manière structurée et professionnelle en utilisant les information
         
         query_lower = query.lower().strip()
         
-        # Salutations simples → réponse courte sans RAG
+        # Salutations simples → réponse professionnelle
         greetings = ['bonjour', 'salut', 'hello', 'hi', 'hey', 'coucou', 'bonsoir', 'yo', 'bjr', 'slt']
         if query_lower in greetings or (len(query_lower) < 10 and any(g in query_lower for g in greetings)):
-            return f"👋 Bonjour ! Je suis l'assistant IA de **{self.owner_info['name']}**.\n\nJe peux vous aider sur :\n📊 Data Science & Analyse\n🌱 Agroécologie & Filière Riz\n📈 Suivi-Évaluation (MEAL)\n🤖 Développement IA & Web\n\nPosez-moi votre question !"
+            return f"👋 Bonjour ! Je suis l'assistant personnel de **{self.owner_info['name']}**.\n\nJe suis là pour vous aider en son absence. {self.owner_info['name']} est peut-être :\n🏢 En réunion professionnelle\n🚀 En déplacement mission\n👨‍👩‍👧‍👦 En famille\n\nN'hésitez pas à me laisser votre message ou à me poser vos questions !\n\nJe peux vous renseigner sur :\n📊 Data Science & Analyse\n🌱 Agroécologie & Filière Riz\n📈 Suivi-Évaluation (MEAL)\n🤖 Développement IA & Web"
         
         # Remerciements / au revoir
         thanks = ['merci', 'thank', 'au revoir', 'bye', 'ciao', 'bonne journée']
